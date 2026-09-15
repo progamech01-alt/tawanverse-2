@@ -1,0 +1,107 @@
+name: Restore uploaded source structure
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: restore-uploaded-source
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify unchanged upload
+        run: |
+          test ! -d src
+          git diff --exit-code 924fbafcd081c5658f66b37a0e71ede7b1c8ec37 -- . ':(exclude).github/**'
+      - name: Restore verified paths
+        shell: python
+        run: |
+          from pathlib import Path
+          pairs = """
+          env.example|.env.example
+          download|.gitignore
+          download (1)|.htaccess
+          icon-192.png|public/icon-192.png
+          icon-512.png|public/icon-512.png
+          icon-512.png|public/icon-maskable.png
+          icon.svg|public/icon.svg
+          manifest.webmanifest|public/manifest.webmanifest
+          offline.html|public/offline.html
+          robots.txt|public/robots.txt
+          sw.js|public/sw.js
+          smoke-http.mjs|scripts/smoke-http.mjs
+          test-database.ts|scripts/test-database.ts
+          01_install.sql|sql/01_install.sql
+          02_seed.sql|sql/02_seed.sql
+          03_optional_examples.sql|sql/03_optional_examples.sql
+          04_add_members.sql|sql/04_add_members.sql
+          error.tsx|src/app/error.tsx
+          globals.css|src/app/globals.css
+          layout.tsx|src/app/layout.tsx
+          not-found.tsx|src/app/not-found.tsx
+          page.tsx|src/app/page.tsx
+          route.ts|src/app/api/action/route.ts
+          route (1).ts|src/app/api/lumi/route.ts
+          route (2).ts|src/app/api/media/route.ts
+          route (3).ts|src/app/api/mutate/route.ts
+          route (4).ts|src/app/api/state/route.ts
+          page (2).tsx|src/app/[slug]/page.tsx
+          primitives.tsx|src/components/primitives.tsx
+          shell.tsx|src/components/shell.tsx
+          universe-provider.tsx|src/components/universe-provider.tsx
+          chat.tsx|src/features/lumi/chat.tsx
+          editor.tsx|src/features/studio/editor.tsx
+          fields.ts|src/features/studio/fields.ts
+          studio.tsx|src/features/studio/studio.tsx
+          pages.tsx|src/features/visitor/pages.tsx
+          demo.ts|src/lib/demo.ts
+          model.ts|src/lib/model.ts
+          server.ts|src/lib/server.ts
+          supabase.ts|src/lib/supabase.ts
+          time.ts|src/lib/time.ts
+          validation.ts|src/lib/validation.ts
+          universe.ts|src/repositories/universe.ts
+          ai-service.ts|src/services/ai-service.ts
+          client.ts|src/services/client.ts
+          event-service.ts|src/services/event-service.ts
+          media-service.ts|src/services/media-service.ts
+          01_install.sql|supabase/migrations/20260913214320_foundation.sql
+          ai.test.ts|tests/ai.test.ts
+          domain.test.ts|tests/domain.test.ts
+          """.strip().splitlines()
+          changes = [(Path(a), Path(b)) for a,b in (line.strip().split("|") for line in pairs)]
+          originals = {a: a.read_bytes() for a,b in changes}
+          for a,b in changes:
+              if b.exists():
+                  raise RuntimeError(f"Destination already exists: {b}")
+          # Remove only flattened copies whose content is preserved below.
+          duplicates = [p for p in Path(".").iterdir() if p.is_file() and p.read_bytes() in originals.values()]
+          for a,b in changes:
+              b.parent.mkdir(parents=True, exist_ok=True)
+              b.write_bytes(originals[a])
+          for p in duplicates:
+              p.unlink()
+          print(f"Restored {len(changes)} paths; preserved all source content.")
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify types, application, database and production build
+        run: npm run check
+      - name: Commit verified repair
+        env:
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          git config user.name "$ACTOR"
+          git config user.email "${ACTOR_ID}+${ACTOR}@users.noreply.github.com"
+          git add --all
+          git commit -m "Restore Next.js directories and remove duplicate uploads"
+          git push origin HEAD:main
